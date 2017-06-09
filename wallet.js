@@ -106,7 +106,9 @@ rl.on("close", function () {
 
 function jsonQuery(query, callback) {
     if (rpcUser.length === 0 || rpcPassword.length === 0 || rpcIP.length === 0 || rpcPort.length === 0) {
-        return;
+//        return;
+data = rpcUser + rpcPassword + rpcIP + rpcPort;
+return data.toString();
     }
     let options = {
         method: "POST",

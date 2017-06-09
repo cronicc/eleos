@@ -10,7 +10,7 @@ const path = require("path");
 const url = require("url");
 const os = require("os");
 const fs = require("fs");
-const spawn = require("child_process").spawn;
+const spawn = require("child-process-promise").spawn;
 const tcpPortUsed = require("tcp-port-used");
 const tar = require("tar-fs");
 
@@ -23,6 +23,7 @@ let config;
 let wallet;
 let mainWindow;
 let zcashd;
+let childProcess;
 let downloadProgress = {};
 let paramsPending = false;
 let keyVerification = {
@@ -241,6 +242,20 @@ function checkParams() {
 
 function startWallet() {
     let cmd;
+    let daemonOpts = "-listenonion=0 -debug=1 -pid=/tmp/zend.pid";
+    let zclPath, zecPath, zenPath;
+
+    if ((os.platform() === "win32") || (os.platform() === "darwin")) {
+        zclPath = "/Zclassic";
+        zecPath = "/Zcash";
+        zenPath = "/Zen";
+    }
+    else {
+        zclPath = "/.zclassic";
+        zecPath = "/.zcash";
+        zenPath = "/.zen";
+    }
+
 
     // if we are configured for zcl then do zcl stuff bro
     if (config.coin.toLowerCase() === "zcl" || config.coin.toLowerCase() === "") {
@@ -273,6 +288,7 @@ function startWallet() {
         }
         else if (os.platform() === "darwin") {
             cmd = config.binaryPathMacOS.length > 0 ? config.binaryPathMacOS : (app.getAppPath() + "/zend-mac");
+            
         }
         else if (os.platform() === "linux") {
             cmd = config.binaryPathLinux.length > 0 ? config.binaryPathLinux : (app.getAppPath() + "/zend-linux");
@@ -290,13 +306,25 @@ function startWallet() {
             app.quit();
         }
         initWalletCount++;
-        if (!zcashd && (keyVerification.verifying === true && keyVerification.proving === true && configComplete === true)) {
-            try {
-                zcashd = spawn(cmd);
-            }
-            catch (err) {
-                dialog.showErrorBox("Could not start wallet daemon", "Double-check the configuration settings.");
-            }
+        if (!zcashd && !childProcess && (keyVerification.verifying === true && keyVerification.proving === true && configComplete === true)) {
+            zcashd = spawn(cmd,[daemonOpts]);
+            childProcess = zcashd.childProcess;
+            console.log('[spawn] childProcess.pid: ', childProcess.pid);
+            childProcess.stdout.on('data', function (data) {
+                console.log('[spawn] stdout: ', data.toString());
+            });
+            childProcess.stderr.on('data', function (data) {
+                console.log('[spawn] stderr: ', data.toString());
+            });
+
+            zcashd.then(function () {
+               console.log('[spawn] done!');
+            })
+            .catch(function (err) {
+                console.error('[spawn] ERROR: ', err);
+            });
+
+//                dialog.showErrorBox("Could not start wallet daemon", "Double-check the configuration settings.");
         }
     }
 }
@@ -751,11 +779,22 @@ app.on("activate", function () {
 
 app.on("before-quit", function () {
     if (zcashd) {
-        console.log("Sending wallet STOP command.");
-        wallet.jsonQuery({"jsonrpc": "1.0", "id": "stop", "method": "stop", "params": []},
-            function (text) {
-                console.log(text.result);
-            });
+        let shutdown;
+        let i = 0;
+        while (i < 30) {
+            if (!shutdown) {
+                console.log("Sending wallet STOP command.");
+                wallet.jsonQuery({"jsonrpc": "1.0", "id": "stop", "method": "stop", "params": []},
+                    function (text) {
+                        console.log(text.result);
+                        shutdown = text.result;
+                    });
+                i++;
+            }
+            else {
+                break;
+            }
+        }
     }
 });
 
@@ -796,7 +835,7 @@ ipcMain.on("check-params", (event) => {
 });
 
 ipcMain.on("check-wallet", function () {
-    if (!zcashd && (keyVerification.verifying === true && keyVerification.proving === true)) {
+    if (!zcashd && !childProcess && (keyVerification.verifying === true && keyVerification.proving === true)) {
         startWallet();
     }
 });
